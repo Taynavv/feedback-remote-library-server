@@ -1,0 +1,36 @@
+{
+  "id": "remote_library_server",
+  "name": "Remote Library Server",
+  "version": "0.2.1",
+  "feedback_target": "0.3.0-alpha.1",
+  "private": false,
+  "license": "AGPL-3.0-or-later",
+  "nav": { "label": "Remote Server", "screen": "remote-library-server" },
+  "screen": "screen.html",
+  "settings": {
+    "html": "settings.html",
+    "server_files": ["remote_library_server/settings.json"]
+  },
+  "diagnostics": {
+    "server_files": ["remote_library_server/settings.json", "remote_library_server/state.json"]
+  },
+  "script": "screen.js",
+  "routes": "routes.py",
+  "category": "tools",
+  "description": "Share your local library over the network.",
+  "icon": "assets/thumb.svg",
+  "standards": ["capability-pipelines.v1", "plugin-runtime-idempotent.v1"],
+  "capabilities": {
+    "library": {
+      "roles": ["requester", "observer"],
+      "requests": ["list-providers", "get-current", "inspect"],
+      "observes": ["providers-refreshed", "source-changed"],
+      "description": "Wraps FeedBack's local library source for direct remote-library clients.",
+      "mode": "active",
+      "compatibility": "none",
+      "ownership": "requester-only",
+      "safety": "safe",
+      "version": 1
+    }
+  }
+}

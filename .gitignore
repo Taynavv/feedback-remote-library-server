@@ -1,0 +1,22 @@
+# never commit song content or generated packages
+*.feedpak
+*.sloppak
+*.psarc
+*.mp3
+*.ogg
+*.wav
+
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# runtime plugin state written into the config dir (never publishable)
+remote_library_server/settings.json
+remote_library_server/state.json
+*.local.json
+
+# machine-local agent config and permission grants — never publishable
+.claude/settings.local.json
+CLAUDE.local.md
