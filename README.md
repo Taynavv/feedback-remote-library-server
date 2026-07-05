@@ -4,6 +4,16 @@ Remote Library Server is a source-side [FeedBack](https://github.com/got-feedbac
 
 The direct server is a thin wrapper around FeedBack's `local` library provider. It does not build or publish a second catalog of its own; the songs, filters, sort order, artwork, and package downloads reflect what the local FeedBack library provider exposes.
 
+> [!CAUTION]
+> **While running, this shares your entire local library with anyone who can reach it.**
+> The server hands out song metadata, artwork, and **downloadable original package files** to every
+> client that connects (and knows the auth token, if you set one). **It is not designed or intended
+> for exposure to the public internet** — it binds to `127.0.0.1` (this machine only) by default for
+> exactly that reason. Binding to your LAN (`0.0.0.0`) or forwarding a port exposes your library; if
+> you do, **set an auth token, share only with people you trust, and never put it on the open internet
+> without a VPN/tunnel and TLS in front of it.** You do this at your own risk — **if you get
+> compromised, that is on you, not on this project.** There is no warranty.
+
 ## Runtime Model
 
 The plugin declares the core `library` capability as a requester/observer. Its manifest uses `requests` for public library owner commands (`list-providers`, `get-current`, `inspect`) and `observes` for source lifecycle events (`providers-refreshed`, `source-changed`). It uses FeedBack's existing `local` provider through the library provider registry, but it does not own the `library` domain and does not register itself as a `library` provider. The Remote Library Client is the plugin that should appear as a `library` provider when it registers a remote source.
@@ -135,6 +145,32 @@ python -m venv .venv
 .venv/bin/pip install pytest fastapi httpx
 .venv/bin/python -m pytest -q
 ```
+
+## Heritage
+
+Remote Library Server is a community port of a plugin originally written by the authors of
+[FeedBack](https://github.com/got-feedback/feedBack). Full credit for the original design and
+implementation goes to them; this repository — maintained by [@Taynavv](https://github.com/Taynavv)
+— is an independent, unofficial port of that work to the current FeedBack plugin API.
+
+If FeedBack's authors would like this repository, I'm glad to hand it over — and if an official
+port is published, I'll take this one down.
+
+## AI disclosure, warranty, and contributions
+
+**This port was built with heavy use of AI coding tools.** The large majority of the code here was
+written by an AI assistant working under human direction, with human review and hands-on testing
+against a real FeedBack install — but you should read it with the same skepticism you'd apply to any
+code of unknown provenance.
+
+**There is no warranty.** This is open-source software provided **as-is**, without warranty of any
+kind, express or implied — see sections 15 and 16 of the [LICENSE](LICENSE). It opens a network port
+and serves your local library to whoever can reach it; if you expose it and get burned, you get to
+keep both pieces.
+
+**Contributions are welcome.** If you find a bug or want a feature, open an issue — or better, submit
+a pull request. Small, focused PRs with a description of what was tested are the easiest to review. By
+contributing you agree your changes are licensed under the same AGPL-3.0 terms.
 
 ## License
 
