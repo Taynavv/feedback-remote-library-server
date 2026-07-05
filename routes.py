@@ -32,7 +32,9 @@ _autostart_thread: threading.Thread | None = None
 _get_scan_status = None
 _config_dir: Path | None = None
 _shutdown_requested = threading.Event()
-_server_lock = threading.Lock()
+# Reentrant so _restart_direct_server can hold it across stop+start (which each
+# re-acquire it) and make the restart atomic against a concurrent start/settings-save.
+_server_lock = threading.RLock()
 NAM_TONE_SYNC_SCHEMA = "slopsmith.nam-tone-sync.v1"
 
 
@@ -388,6 +390,18 @@ def _remote_summary_from_local_song(song: dict) -> dict:
     return summary
 
 
+def _summaries_from_songs(songs: list[dict]) -> list[dict]:
+    # A single malformed song (e.g. one missing its filename) must not 500 an entire
+    # /songs or /artists page — skip the ones that cannot be summarized.
+    summaries = []
+    for song in songs:
+        try:
+            summaries.append(_remote_summary_from_local_song(song))
+        except ValueError:
+            continue
+    return summaries
+
+
 def _config_root() -> Path:
     if _config_dir is not None:
         return _config_dir
@@ -560,7 +574,7 @@ def _remote_artists_from_local_artists(artists: list[dict]) -> list[dict]:
     for artist in artists:
         albums = []
         for album in artist.get("albums") or []:
-            songs = [_remote_summary_from_local_song(song) for song in album.get("songs") or []]
+            songs = _summaries_from_songs(album.get("songs") or [])
             albums.append({**album, "songs": songs})
         remote_artists.append({**artist, "albums": albums})
     return remote_artists
@@ -676,10 +690,12 @@ def _query_page_payload(
             tunings=tunings,
         ),
     )
-    next_offset = offset + page_size
+    # Base the next cursor on the page actually served (page_number), not on the raw
+    # cursor offset — otherwise paginating via ?page= always advertised nextCursor=pageSize.
+    next_offset = (page_number + 1) * page_size
     return {
         "source": _source_payload(),
-        "songs": [_remote_summary_from_local_song(song) for song in songs],
+        "songs": _summaries_from_songs(songs),
         "total": int(total or 0),
         "nextCursor": str(next_offset) if next_offset < int(total or 0) else None,
         "query": {
@@ -931,8 +947,11 @@ def _stop_direct_server() -> dict:
 
 
 def _restart_direct_server() -> dict:
-    _stop_direct_server()
-    return _start_direct_server()
+    # Hold the reentrant lock across the whole stop+start so a concurrent start or
+    # settings-save can't slip into the window where the server is momentarily stopped.
+    with _server_lock:
+        _stop_direct_server()
+        return _start_direct_server()
 
 
 def _autostart_after_scan() -> None:

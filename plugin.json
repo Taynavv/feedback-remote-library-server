@@ -12,7 +12,7 @@
     "server_files": ["remote_library_server/settings.json"]
   },
   "diagnostics": {
-    "server_files": ["remote_library_server/settings.json", "remote_library_server/state.json"]
+    "server_files": ["remote_library_server/state.json"]
   },
   "script": "screen.js",
   "routes": "routes.py",

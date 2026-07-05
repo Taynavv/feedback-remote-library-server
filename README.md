@@ -34,7 +34,7 @@ FeedBack plugin:
    `feedback-remote-library-server` folder in your FeedBack plugins directory.
 3. Reload FeedBack. The plugin appears as **Remote Server** in the navigation.
 
-See the [FeedBack](https://github.com/got-feedBack/feedBack) documentation for where
+See the [FeedBack](https://github.com/got-feedback/feedBack) documentation for where
 your instance loads plugins from.
 
 ## Security
