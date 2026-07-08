@@ -69,6 +69,14 @@ Library ID over iroh** with no port forwarding. It is a thin wrapper around Feed
   `settings.json` (which the UI reads) — the Library ID must survive restarts and the private key must
   never reach the settings API. Only `irohEnabled` (the toggle) is a setting. `iroh` is lazy-imported,
   so the plain direct server runs without the native dependency.
+- **The tunnel must never half-close (`write_eof`) the request side of the local socket.** `_pipe`'s
+  `iroh_to_local` relays the request and stops on the iroh EOF, but it must NOT propagate that as a TCP
+  FIN to the local server: real ASGI servers (uvicorn/h11) treat an early request-side FIN as a client
+  disconnect and cancel the in-flight handler, replying with *nothing*. The client then sees an **empty
+  library** even though the iroh connection succeeded (it's a race — only a request that does real work
+  loses it, so a trivial stub hides the bug). HTTP framing (Content-Length / a bodyless method) plus
+  `Connection: close` already delimit both request and response, so the FIN is unnecessary.
+  `tests/test_iroh_tunnel.py::test_tunnel_pipes_to_real_asgi_server` guards this against a real uvicorn.
 
 ## Rules
 
@@ -85,13 +93,15 @@ Library ID over iroh** with no port forwarding. It is a thin wrapper around Feed
 python -m venv .venv
 
 # Windows
-.venv/Scripts/pip install pytest fastapi httpx iroh
+.venv/Scripts/pip install pytest fastapi httpx uvicorn iroh
 .venv/Scripts/python -m pytest -q
 
 # macOS / Linux
-.venv/bin/pip install pytest fastapi httpx iroh
+.venv/bin/pip install pytest fastapi httpx uvicorn iroh
 .venv/bin/python -m pytest -q
 ```
 
-`iroh` (from `requirements.txt`) is only needed to run the iroh tunnel tests — they `importorskip`
-it, so the suite still passes without it. CI installs it so those tests run for real.
+`iroh` (from `requirements.txt`) and `uvicorn` are only needed for the iroh tunnel tests — they
+`importorskip` both, so the suite still passes without them. CI installs both so those tests run for
+real. `uvicorn` matters specifically for `test_tunnel_pipes_to_real_asgi_server`: a real ASGI server
+reproduces the request half-close (`write_eof`) abort that a lenient stub silently tolerates.

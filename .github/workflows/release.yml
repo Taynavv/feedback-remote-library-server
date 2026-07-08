@@ -19,7 +19,7 @@ jobs:
 
       - name: Install Python deps
         run: |
-          pip install pytest fastapi httpx ruff
+          pip install pytest fastapi httpx uvicorn ruff  # uvicorn: the real-ASGI iroh-tunnel regression test
           pip install -r requirements.txt  # iroh, so the iroh tunnel tests run for real
 
       - name: Lint

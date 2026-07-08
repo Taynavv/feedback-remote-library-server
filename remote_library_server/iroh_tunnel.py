@@ -159,6 +159,11 @@ class IrohTunnel:
             return
 
         async def iroh_to_local():
+            # Relay the request bytes to the local server. Do NOT half-close (write_eof) the local
+            # socket when the iroh side ends: real ASGI servers (uvicorn/h11) treat an early FIN on
+            # the request as a client disconnect and drop the response without replying. HTTP framing
+            # — Content-Length, or a bodyless method like GET — already tells the local server where
+            # the request ends, and Connection: close bounds the response, so no EOF signal is needed.
             try:
                 while True:
                     chunk = await recv.read(65536)
@@ -166,11 +171,8 @@ class IrohTunnel:
                         break
                     writer.write(chunk)
                     await writer.drain()
-            finally:
-                try:
-                    writer.write_eof()
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
         async def local_to_iroh():
             try:
