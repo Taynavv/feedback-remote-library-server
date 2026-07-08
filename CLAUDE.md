@@ -69,6 +69,12 @@ Library ID over iroh** with no port forwarding. It is a thin wrapper around Feed
   `settings.json` (which the UI reads) — the Library ID must survive restarts and the private key must
   never reach the settings API. Only `irohEnabled` (the toggle) is a setting. `iroh` is lazy-imported,
   so the plain direct server runs without the native dependency.
+- **The advertised Library ID is the bare EndpointId, NOT a ticket.** `status()` returns `libraryId ==
+  endpointId` (the 64-hex public key) — that's the value the UI shows and users share. It is stable
+  across restarts (persistent key) and clients resolve its live address via iroh discovery. A full
+  `EndpointTicket` (id + *current* relay/socket addresses) is also computed and returned as `ticket`,
+  but only for diagnostics/direct-dial: a ticket's string changes every restart as addresses change,
+  so advertising it made the Library ID look like it kept regenerating. Keep `libraryId` = the bare id.
 - **The tunnel must never half-close (`write_eof`) the request side of the local socket.** `_pipe`'s
   `iroh_to_local` relays the request and stops on the iroh EOF, but it must NOT propagate that as a TCP
   FIN to the local server: real ASGI servers (uvicorn/h11) treat an early request-side FIN as a client

@@ -145,7 +145,7 @@
             <div class="mt-3 rounded-lg border border-teal-500/30 bg-teal-500/10 p-4">
                 <div class="text-xs uppercase text-teal-200">Share over iroh (P2P)</div>
                 ${iroh.running && iroh.libraryId ? `
-                    <div class="mt-1 text-sm text-gray-200">Reachable by Library ID — no port forwarding. Share it with followers:</div>
+                    <div class="mt-1 text-sm text-gray-200">Reachable by this Library ID — no port forwarding, and it stays the same across restarts. Share it with followers:</div>
                     <div class="mt-2 flex items-center gap-2">
                         <input readonly value="${esc(iroh.libraryId)}" onclick="this.select()" class="min-w-0 flex-1 rounded-lg border border-gray-800 bg-dark-950 px-3 py-2 font-mono text-xs text-gray-100" style="background:#0f172a;color:#f8fafc;" />
                         <button class="flex-shrink-0 rounded-lg bg-teal-500/20 px-3 py-2 text-sm text-teal-100 transition hover:bg-teal-500/30" data-rls-copy="${esc(iroh.libraryId)}">Copy</button>

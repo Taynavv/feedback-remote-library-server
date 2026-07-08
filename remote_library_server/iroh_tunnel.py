@@ -58,6 +58,7 @@ class IrohTunnel:
         self._endpoint = None
         self._library_id: str | None = None
         self._endpoint_id: str | None = None
+        self._ticket: str | None = None
         self._local: tuple[str, int] | None = None
         self._stopping = threading.Event()
 
@@ -79,7 +80,13 @@ class IrohTunnel:
                 pass  # relay can take longer to settle; addr() still yields direct addresses
             iroh = _iroh()
             self._endpoint_id = self._endpoint.id().to_bytes().hex()
-            self._library_id = str(iroh.EndpointTicket.from_addr(self._endpoint.addr()))
+            # The shared Library ID is the STABLE EndpointId (public key) — NOT a ticket. A ticket
+            # also bundles the current relay + socket addresses, so its string changes on every
+            # restart/network change even though the identity is unchanged; that churn is confusing
+            # and breaks saved follows. iroh discovery resolves the id's live address on connect.
+            # The full ticket (with embedded direct addresses) stays available for diagnostics.
+            self._library_id = self._endpoint_id
+            self._ticket = str(iroh.EndpointTicket.from_addr(self._endpoint.addr()))
             self._run_soon(self._accept_loop())
             return self.status()
 
@@ -97,6 +104,7 @@ class IrohTunnel:
             self._loop = None
             self._library_id = None
             self._endpoint_id = None
+            self._ticket = None
             return {"running": False}
 
     def is_running(self) -> bool:
@@ -105,8 +113,9 @@ class IrohTunnel:
     def status(self) -> dict:
         return {
             "running": self.is_running(),
-            "libraryId": self._library_id,
+            "libraryId": self._library_id,  # the stable EndpointId — the value users share
             "endpointId": self._endpoint_id,
+            "ticket": self._ticket,  # full ticket (id + current addresses); diagnostics / direct dial
         }
 
     # -- internals -------------------------------------------------------

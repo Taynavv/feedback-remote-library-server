@@ -68,6 +68,8 @@ def test_tunnel_lifecycle_and_stable_identity(tmp_path):
     try:
         assert status["running"] is True
         assert status["endpointId"] and status["libraryId"]
+        # The shared Library ID is the STABLE EndpointId (public key), not a churning ticket.
+        assert status["libraryId"] == status["endpointId"]
         first_id = status["endpointId"]
     finally:
         tunnel.stop()
@@ -114,7 +116,7 @@ def test_tunnel_pipes_http_to_local_server(tmp_path):
         secret = iroh.SecretKey.generate()
         opts = iroh.EndpointOptions(preset=iroh.preset_n0(), secret_key=secret.to_bytes(), alpns=[ALPN])
         endpoint = await iroh.Endpoint.bind(opts)
-        addr = iroh.EndpointTicket.from_string(status["libraryId"]).endpoint_addr()
+        addr = iroh.EndpointTicket.from_string(status["ticket"]).endpoint_addr()  # direct-dial for a fast local test
         conn = await endpoint.connect(addr, ALPN)
         bi = await conn.open_bi()
         send, recv = bi.send(), bi.recv()
@@ -183,7 +185,7 @@ def test_tunnel_pipes_to_real_asgi_server(tmp_path):
         secret = iroh.SecretKey.generate()
         opts = iroh.EndpointOptions(preset=iroh.preset_n0(), secret_key=secret.to_bytes(), alpns=[ALPN])
         endpoint = await iroh.Endpoint.bind(opts)
-        addr = iroh.EndpointTicket.from_string(status["libraryId"]).endpoint_addr()
+        addr = iroh.EndpointTicket.from_string(status["ticket"]).endpoint_addr()  # direct-dial for a fast local test
         conn = await endpoint.connect(addr, ALPN)
         bi = await conn.open_bi()
         send, recv = bi.send(), bi.recv()
