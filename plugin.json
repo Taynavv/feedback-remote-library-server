@@ -25,7 +25,7 @@
       "roles": ["requester", "observer"],
       "requests": ["list-providers", "get-current", "inspect"],
       "observes": ["providers-refreshed", "source-changed"],
-      "description": "Wraps FeedBack's local library source for direct remote-library clients.",
+      "description": "Wraps FeedBack's local library source for remote-library clients, reachable over a direct HTTP API or peer-to-peer over iroh.",
       "mode": "active",
       "compatibility": "none",
       "ownership": "requester-only",

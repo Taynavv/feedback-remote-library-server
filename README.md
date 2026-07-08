@@ -78,7 +78,9 @@ can reach its host and port. Configure it accordingly:
 
 To report a security issue, see [SECURITY.md](SECURITY.md).
 
-## Direct Flow
+## Flow
+
+A client reaches these endpoints either directly (HTTP on the bind host/port) or, when [Share over iroh](#share-over-iroh-peer-to-peer-no-port-forwarding) is on, over an iroh QUIC stream tunnelled to the *same* API — the request set and auth below are identical on both paths.
 
 ```mermaid
 flowchart LR
