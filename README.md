@@ -30,7 +30,17 @@ Management stays on the plugin's existing screen and backend routes rather than 
 - Serves original package files for remote load/play.
 - Optionally shares per-song NAM tone preset mappings, referenced `.nam` models, and IR `.wav` files.
 - Exposes artist tree, stats, and tuning-name helper endpoints for the remote Library UI.
-- Allows a client plugin to connect by base URL.
+- Allows a client plugin to connect by base URL, **or peer-to-peer by a Library ID over iroh** (see below).
+
+## Share over iroh (peer-to-peer, no port forwarding)
+
+For sharing beyond your LAN without touching your router, enable **Share over iroh** in the settings. The server then dials outbound to [iroh](https://www.iroh.computer/)'s relay/discovery network and becomes reachable from anywhere by a **Library ID** — a self-authenticating public key shown on the screen. Copy it to a friend; they add it in **Remote Client → + → Remote Server over iroh**, and everything works exactly as the direct connection (it's the *same* API, tunnelled over an iroh QUIC stream).
+
+- **No port forwarding, no dynamic DNS, no exposing your machine to the internet.** iroh connects peers directly (hole-punched) when it can, or via a shared public relay otherwise.
+- **The Library ID is stable** (backed by a persistent key stored separately from your settings) and **self-authenticating** — nobody can impersonate your library.
+- **Set an auth token** (below) unless you're happy for anyone with the ID to browse — it protects the iroh path too.
+- **Availability follows your machine:** the library is reachable only while this server is running.
+- Requires the `iroh` dependency (in `requirements.txt`, installed by FeedBack on load); it's used only when the toggle is on.
 
 ## Install
 
@@ -121,6 +131,7 @@ The plugin also exposes management endpoints on FeedBack's main backend:
 - `sourceName`: display name returned by `/source`.
 - `authToken`: optional shared secret. When set, clients must present it to reach any endpoint except `/health` (see [Security](#security)). Default: empty (open access).
 - `shareNamToneAssets`: allows the direct server to expose NAM Tone Engine preset mappings and referenced model/IR assets for synced songs. Default: `false`.
+- `irohEnabled`: also share the server **peer-to-peer over iroh** by a Library ID, with no port forwarding (see [Share over iroh](#share-over-iroh-peer-to-peer-no-port-forwarding)). Default: `false`. (The iroh identity key is stored separately, never in settings.)
 
 If `enabled` is true during FeedBack startup, the plugin reports `waitingForScan` and starts the direct server after the local library scan reaches `complete`.
 

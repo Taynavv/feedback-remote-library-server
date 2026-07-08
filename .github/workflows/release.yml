@@ -18,7 +18,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python deps
-        run: pip install pytest fastapi httpx ruff
+        run: |
+          pip install pytest fastapi httpx ruff
+          pip install -r requirements.txt  # iroh, so the iroh tunnel tests run for real
 
       - name: Lint
         run: ruff check .
@@ -41,7 +43,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           NAME="feedback-remote-library-server"
           mkdir -p "dist/$NAME"
-          cp -r plugin.json routes.py screen.html screen.js settings.html              remote_library_server assets README.md LICENSE "dist/$NAME/"
+          cp -r plugin.json requirements.txt routes.py screen.html screen.js settings.html              remote_library_server assets README.md LICENSE "dist/$NAME/"
           find "dist/$NAME" -name '__pycache__' -type d -prune -exec rm -rf {} +
           # Fail the build if the manifest references a file that did not get packaged
           python - "$NAME" <<'PY'

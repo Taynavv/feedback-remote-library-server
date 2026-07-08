@@ -50,7 +50,14 @@
         <label class="space-y-1 text-sm text-gray-300 md:col-span-2">
           <span class="block text-xs uppercase text-gray-500">Auth token (optional)</span>
           <input id="rls-auth-token" type="password" autocomplete="off" spellcheck="false" placeholder="Leave blank to allow open access on a trusted network" class="w-full rounded-lg border border-gray-800 bg-dark-950 px-3 py-2 text-gray-100" style="background:#0f172a;color:#f8fafc;" />
-          <span class="block text-xs text-gray-500">Required to browse or download when set. Share it with the client. Strongly recommended if you bind to <code>0.0.0.0</code>.</span>
+          <span class="block text-xs text-gray-500">Required to browse or download when set. Share it with the client. Strongly recommended if you bind to <code>0.0.0.0</code>, and for iroh sharing below.</span>
+        </label>
+        <label class="flex items-start gap-2 text-sm text-gray-300 md:col-span-2">
+          <input id="rls-iroh-enabled" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-gray-700 bg-dark-800" />
+          <span>
+            <span class="block">Share over iroh (peer-to-peer, no port forwarding)</span>
+            <span class="block text-xs text-gray-500">Makes this server reachable by a <strong>Library ID</strong> from anywhere over the internet, with no router setup — it appears above once running. Followers add it in Remote Client → + → “Remote Server over iroh”. Set an auth token above unless you want anyone with the ID to browse.</span>
+          </span>
         </label>
       </div>
     </div>

@@ -8,7 +8,7 @@ from threading import RLock
 
 from .models import utc_now_iso
 
-_SETTINGS_KEYS = ("enabled", "host", "port", "sourceName", "shareNamToneAssets", "authToken")
+_SETTINGS_KEYS = ("enabled", "host", "port", "sourceName", "shareNamToneAssets", "authToken", "irohEnabled")
 
 
 def _default_settings() -> dict:
@@ -19,6 +19,7 @@ def _default_settings() -> dict:
         "sourceName": "",
         "shareNamToneAssets": False,
         "authToken": "",
+        "irohEnabled": False,
     }
 
 

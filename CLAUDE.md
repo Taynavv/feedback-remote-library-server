@@ -4,8 +4,9 @@ Remote Library Server is a [FeedBack](https://github.com/got-feedback/feedBack)
 plugin (id `remote_library_server`) that shares the running instance's local library
 over a small direct HTTP API on its own port, so the
 [Remote Library Client](https://github.com/Taynavv/feedback-remote-library-client) on
-another machine can browse and pull songs from it. It is a thin wrapper around
-FeedBack's `local` library provider — it never builds a second catalog of its own.
+another machine can browse and pull songs from it — over the LAN, or **peer-to-peer by a
+Library ID over iroh** with no port forwarding. It is a thin wrapper around FeedBack's
+`local` library provider — it never builds a second catalog of its own.
 
 ## Architecture
 
@@ -15,7 +16,8 @@ FeedBack's `local` library provider — it never builds a second catalog of its 
 | [remote_library_server/models.py](remote_library_server/models.py) | `PackageForm` enum + the remote song-summary shapes returned by the direct API |
 | [remote_library_server/store.py](remote_library_server/store.py) | Settings + runtime state persistence (`settings.json` / `state.json` in the plugin's server-files dir) |
 | [remote_library_server/crypto.py](remote_library_server/crypto.py) | URL-safe encode/decode of remote song IDs (references to library-relative filenames) |
-| [screen.html](screen.html) / [screen.js](screen.js) | Management screen: enable, bind host/port, source name, NAM-asset toggle, live activity |
+| [remote_library_server/iroh_tunnel.py](remote_library_server/iroh_tunnel.py) | `IrohTunnel` — the optional "Share over iroh (P2P)" transport: binds an iroh endpoint (a **persistent** secret key ⇒ a stable Library ID / EndpointId), accepts QUIC streams, and pipes each straight to the running direct server on `127.0.0.1:<port>`. The direct API is untouched. Needs `iroh` (`requirements.txt`, lazy-imported); the key lives in its own file, never in `settings.json` |
+| [screen.html](screen.html) / [screen.js](screen.js) | Management screen: enable, bind host/port, source name, NAM-asset toggle, **"Share over iroh" toggle + copyable Library ID**, live activity |
 | [settings.html](settings.html) | Settings surface |
 | [tests/](tests) | pytest, content-free: fake local providers + synthetic packages |
 
@@ -55,7 +57,18 @@ FeedBack's `local` library provider — it never builds a second catalog of its 
 - **Direct-API auth is optional and gated by `authToken`.** Empty token ⇒ open server
   (the localhost/trusted-LAN default). Non-empty ⇒ every endpoint except `/health`
   requires `Authorization: Bearer <token>` or a `?token=` query param, checked live per
-  request by `_require_auth` with `hmac.compare_digest`.
+  request by `_require_auth` with `hmac.compare_digest`. **This gate also protects iroh
+  clients** (they hit the same direct app), so recommend a token whenever iroh sharing is on.
+- **iroh sharing tunnels the existing direct API — it is not a second protocol.** `IrohTunnel`
+  binds an iroh endpoint and pipes each accepted QUIC stream to `127.0.0.1:<direct port>`, so the
+  direct FastAPI app (and its `authToken` gate) serve iroh clients unchanged. Its lifecycle *follows
+  the direct server*: `_start_direct_server` / `_stop_direct_server` start/stop it, `save_settings`
+  calls `_reconcile_iroh_tunnel`, and it needs the direct server running (that's its pipe target).
+- **The iroh identity is a persistent secret kept out of settings.** The secret key (⇒ the stable
+  Library ID) lives in `iroh_identity.key` in the store dir via `_load_or_create_secret`, NOT in
+  `settings.json` (which the UI reads) — the Library ID must survive restarts and the private key must
+  never reach the settings API. Only `irohEnabled` (the toggle) is a setting. `iroh` is lazy-imported,
+  so the plain direct server runs without the native dependency.
 
 ## Rules
 
@@ -72,10 +85,13 @@ FeedBack's `local` library provider — it never builds a second catalog of its 
 python -m venv .venv
 
 # Windows
-.venv/Scripts/pip install pytest fastapi httpx
+.venv/Scripts/pip install pytest fastapi httpx iroh
 .venv/Scripts/python -m pytest -q
 
 # macOS / Linux
-.venv/bin/pip install pytest fastapi httpx
+.venv/bin/pip install pytest fastapi httpx iroh
 .venv/bin/python -m pytest -q
 ```
+
+`iroh` (from `requirements.txt`) is only needed to run the iroh tunnel tests — they `importorskip`
+it, so the suite still passes without it. CI installs it so those tests run for real.

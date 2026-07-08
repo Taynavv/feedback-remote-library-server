@@ -31,6 +31,7 @@ _direct_thread: threading.Thread | None = None
 _autostart_thread: threading.Thread | None = None
 _get_scan_status = None
 _config_dir: Path | None = None
+_iroh_tunnel = None  # lazily-created IrohTunnel while the iroh (P2P) share toggle is on
 _shutdown_requested = threading.Event()
 # Reentrant so _restart_direct_server can hold it across stop+start (which each
 # re-acquire it) and make the restart atomic against a concurrent start/settings-save.
@@ -175,6 +176,7 @@ def _normalize_settings(data: dict) -> dict:
         incoming.get("shareNamToneAssets", current.get("shareNamToneAssets", False))
     )
     normalized["authToken"] = str(incoming.get("authToken", current.get("authToken")) or "").strip()
+    normalized["irohEnabled"] = bool(incoming.get("irohEnabled", current.get("irohEnabled", False)))
     return normalized
 
 
@@ -927,11 +929,13 @@ def _start_direct_server() -> dict:
         _direct_thread = thread
     if _store:
         _store.add_activity("direct-server", "started", f"Direct server started on {host}:{port}")
+    _start_iroh_tunnel()
     return _server_status()
 
 
 def _stop_direct_server() -> dict:
     global _direct_server, _direct_thread
+    _stop_iroh_tunnel()  # the tunnel pipes to the direct server, so stop it first
     with _server_lock:
         if _direct_server is not None:
             _direct_server.should_exit = True
@@ -993,6 +997,66 @@ def _shutdown() -> None:
     _stop_direct_server()
 
 
+def _iroh_enabled() -> bool:
+    return bool(_settings().get("irohEnabled"))
+
+
+def _iroh_local_target() -> tuple[str, int]:
+    # The tunnel always reaches the direct server locally; if it binds to a wildcard, use loopback.
+    host = _bind_host()
+    local_host = "127.0.0.1" if host in {"0.0.0.0", "::", ""} else host
+    return local_host, _bind_port()
+
+
+def _start_iroh_tunnel() -> None:
+    global _iroh_tunnel
+    if not _iroh_enabled() or not _is_direct_server_running():
+        return
+    try:
+        from remote_library_server.iroh_tunnel import IrohTunnel
+    except Exception as exc:  # native dep missing (e.g. a locked-down deploy)
+        if _store:
+            _store.add_activity("iroh", "failed", f"iroh is unavailable: {exc}")
+        return
+    with _server_lock:
+        if _iroh_tunnel is None:
+            _iroh_tunnel = IrohTunnel(_store.root if _store else _config_root())
+        if _iroh_tunnel.is_running():
+            return
+        host, port = _iroh_local_target()
+        try:
+            status = _iroh_tunnel.start(host, port)
+        except Exception as exc:
+            if _store:
+                _store.add_activity("iroh", "failed", f"iroh tunnel failed to start: {exc}")
+            return
+    if _store:
+        short_id = str(status.get("endpointId") or "")[:12]
+        _store.add_activity("iroh", "started", f"iroh sharing on — Library ID {short_id}…")
+
+
+def _stop_iroh_tunnel() -> None:
+    with _server_lock:
+        if _iroh_tunnel is not None and _iroh_tunnel.is_running():
+            _iroh_tunnel.stop()
+            if _store:
+                _store.add_activity("iroh", "stopped", "iroh sharing stopped")
+
+
+def _reconcile_iroh_tunnel() -> None:
+    # Keep the tunnel's state in sync with the toggle + the direct server after any change.
+    if _iroh_enabled() and _is_direct_server_running():
+        _start_iroh_tunnel()
+    else:
+        _stop_iroh_tunnel()
+
+
+def _iroh_status() -> dict:
+    if _iroh_tunnel is None:
+        return {"enabled": _iroh_enabled(), "running": False, "libraryId": None, "endpointId": None}
+    return {"enabled": _iroh_enabled(), **_iroh_tunnel.status()}
+
+
 def _server_status() -> dict:
     return {
         "running": _is_direct_server_running(),
@@ -1002,6 +1066,7 @@ def _server_status() -> dict:
         "url": _direct_url(),
         "protocol": "slopsmith-direct-library.v1",
         "authRequired": bool(_auth_token()),
+        "iroh": _iroh_status(),
     }
 
 
@@ -1026,16 +1091,16 @@ def setup(app, context):
         settings = _store.save_settings(_normalize_settings(data))
         try:
             if not settings.get("enabled"):
-                server = _stop_direct_server()
+                _stop_direct_server()
             elif _is_direct_server_running():
-                server = _restart_direct_server()
+                _restart_direct_server()
             else:
                 _schedule_autostart_after_scan()
-                server = _server_status()
         except ValueError as exc:
             _store.add_activity("direct-server", "failed", str(exc))
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {**settings, "server": server}
+        _reconcile_iroh_tunnel()  # apply the iroh toggle (start/stop) after the direct server settles
+        return {**settings, "server": _server_status()}
 
     @app.get("/api/plugins/remote_library_server/status")
     def status():

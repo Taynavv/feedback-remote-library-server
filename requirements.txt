@@ -1,0 +1,9 @@
+# Runtime dependency for the optional "Share over iroh (P2P)" toggle (remote_library_server/
+# iroh_tunnel.py). FeedBack installs it into the plugin's persistent pip_packages directory on
+# load. It is imported LAZILY and only when the toggle is on, so the plain direct HTTP server runs
+# without it. (fastapi/uvicorn are provided by FeedBack core, so they are not listed here.)
+#
+#   iroh — a peer-to-peer QUIC transport so this server is reachable by its Library ID with no
+#          port forwarding: it dials outbound to iroh's relay/discovery network and pipes each
+#          accepted stream straight to the local direct server.
+iroh>=1.0,<2

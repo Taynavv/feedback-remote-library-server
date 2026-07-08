@@ -1,7 +1,7 @@
 {
   "id": "remote_library_server",
   "name": "Remote Library Server",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "feedback_target": "0.3.0-alpha.1",
   "private": false,
   "license": "AGPL-3.0-or-later",
@@ -17,7 +17,7 @@
   "script": "screen.js",
   "routes": "routes.py",
   "category": "tools",
-  "description": "Share your local library over the network.",
+  "description": "Share your local library over the network — directly, or peer-to-peer by ID over iroh (no port forwarding).",
   "icon": "assets/thumb.svg",
   "standards": ["capability-pipelines.v1", "plugin-runtime-idempotent.v1"],
   "capabilities": {
