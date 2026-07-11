@@ -8,6 +8,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.testclient import TestClient
@@ -677,3 +678,112 @@ def test_settings_key_is_stable_regardless_of_provider_song_fields(tmp_path):
     # even when the provider song carries id/songKey/sourceKind fields.
     assert payload["sourceSettingsKey"] == song["settingsKey"]
     assert payload["targetSettingsKey"] == song["settingsKey"]
+
+
+def test_status_does_not_expose_auth_token(tmp_path):
+    management_client, _direct_client, _package_path = _client(tmp_path)
+    management_client.post("/api/plugins/remote_library_server/settings", json={
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": 9876,
+        "sourceName": "Studio Source",
+        "authToken": "s3cret-token",
+    })
+
+    status = management_client.get("/api/plugins/remote_library_server/status").json()
+
+    # The secret must not ride along in the broadly-consumed status blob...
+    assert "authToken" not in status["settings"]
+    assert "s3cret-token" not in json.dumps(status)
+    # ...but whether a token is set is still discoverable without the secret.
+    assert status["server"]["authRequired"] is True
+    # The dedicated settings endpoint still returns it (it backs the edit form).
+    assert management_client.get("/api/plugins/remote_library_server/settings").json()["authToken"] == "s3cret-token"
+
+
+def test_health_returns_only_liveness(tmp_path):
+    _management_client, direct_client, _package_path = _client(tmp_path)
+
+    response = direct_client.get("/health")
+
+    assert response.status_code == 200
+    # /health is unauthenticated (and reachable over iroh) — it must not leak the hostname-derived
+    # sourceId or anything else identifying.
+    assert response.json() == {"ok": True}
+
+
+def test_source_omits_discovered_ip_on_wildcard_bind(tmp_path):
+    management_client, direct_client, _package_path = _client(tmp_path)
+    management_client.post("/api/plugins/remote_library_server/settings", json={
+        "enabled": False,
+        "host": "0.0.0.0",
+        "port": 9876,
+        "sourceName": "Studio Source",
+    })
+
+    body = direct_client.get("/source").json()
+
+    # On a wildcard bind, /source must not advertise a probed LAN IP to remote/iroh callers.
+    assert body["server"]["url"] is None
+    # The API is otherwise fully functional.
+    assert direct_client.get("/songs?q=clean&pageSize=10").status_code == 200
+
+
+def test_iroh_limit_settings_are_clamped(tmp_path):
+    management_client, _direct_client, _package_path = _client(tmp_path)
+
+    clamped = management_client.post("/api/plugins/remote_library_server/settings", json={
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": 9876,
+        "sourceName": "Studio Source",
+        "irohMaxStreams": 0,          # below min -> clamps up to 1
+        "irohIdleTimeout": 99999,     # above max -> clamps down to 3600
+    }).json()
+    assert clamped["irohMaxStreams"] == 1
+    assert clamped["irohIdleTimeout"] == 3600
+
+    sane = management_client.post("/api/plugins/remote_library_server/settings", json={
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": 9876,
+        "sourceName": "Studio Source",
+        "irohMaxStreams": 64,
+        "irohIdleTimeout": 45,
+    }).json()
+    assert sane["irohMaxStreams"] == 64
+    assert sane["irohIdleTimeout"] == 45
+
+
+def test_sha256_file_caches_and_refreshes_on_change(tmp_path):
+    routes = importlib.reload(importlib.import_module("routes"))
+    asset = tmp_path / "asset.bin"
+
+    asset.write_bytes(b"first")
+    first_hash = routes._sha256_file(asset)
+    assert first_hash == "sha256:" + hashlib.sha256(b"first").hexdigest()
+    assert routes._sha256_cache  # digest cached, so repeat requests don't re-read the file
+    assert routes._sha256_file(asset) == first_hash
+
+    # A changed file (different size) invalidates the (mtime, size) fingerprint.
+    asset.write_bytes(b"second-and-longer")
+    second_hash = routes._sha256_file(asset)
+    assert second_hash == "sha256:" + hashlib.sha256(b"second-and-longer").hexdigest()
+    assert second_hash != first_hash
+
+
+def test_regenerate_iroh_key_endpoint_issues_new_identity(tmp_path):
+    pytest.importorskip("iroh")
+    management_client, _direct_client, _package_path = _client(tmp_path)
+    routes = importlib.import_module("routes")
+    from remote_library_server.iroh_tunnel import _load_or_create_secret
+
+    first = _load_or_create_secret(routes._store.root)
+    assert (routes._store.root / "iroh_identity.key").exists()
+
+    response = management_client.post("/api/plugins/remote_library_server/iroh/regenerate-key", json={})
+
+    assert response.status_code == 200
+    after = _load_or_create_secret(routes._store.root)
+    assert len(after) == 32
+    assert after != first  # a brand-new Library ID

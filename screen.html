@@ -56,9 +56,23 @@
           <input id="rls-iroh-enabled" type="checkbox" class="mt-0.5 h-4 w-4 rounded border-gray-700 bg-dark-800" />
           <span>
             <span class="block">Share over iroh (peer-to-peer, no port forwarding)</span>
-            <span class="block text-xs text-gray-500">Makes this server reachable by a <strong>Library ID</strong> from anywhere over the internet, with no router setup — it appears above once running. Followers add it in Remote Client → + → “Remote Server over iroh”. Set an auth token above unless you want anyone with the ID to browse.</span>
+            <span class="block text-xs text-gray-500">Makes this server reachable by a <strong>Library ID</strong> from anywhere over the internet, with no router setup — it appears above once running. Followers add it in Remote Client → + → “Remote Server over iroh”. <strong>This reaches the public internet regardless of the Host setting above</strong>, so set an auth token unless you want anyone with the ID to browse.</span>
           </span>
         </label>
+        <details class="md:col-span-2 rounded-lg border border-gray-800/50 bg-dark-800/30 p-3">
+          <summary class="cursor-pointer text-xs uppercase text-gray-500">iroh advanced limits</summary>
+          <p class="mt-2 text-xs text-gray-500">Abuse limits for the peer-to-peer tunnel. The defaults suit sharing with a handful of followers — <strong>leave them as-is unless you have a specific reason to change them.</strong></p>
+          <div class="mt-3 grid gap-3 sm:grid-cols-2">
+            <label class="space-y-1 text-sm text-gray-300">
+              <span class="block text-xs uppercase text-gray-500">Max concurrent streams</span>
+              <input id="rls-iroh-max-streams" type="number" min="1" max="4096" class="w-full rounded-lg border border-gray-800 bg-dark-950 px-3 py-2 text-gray-100" style="background:#0f172a;color:#f8fafc;" />
+            </label>
+            <label class="space-y-1 text-sm text-gray-300">
+              <span class="block text-xs uppercase text-gray-500">Stream idle timeout (seconds)</span>
+              <input id="rls-iroh-idle-timeout" type="number" min="10" max="3600" class="w-full rounded-lg border border-gray-800 bg-dark-950 px-3 py-2 text-gray-100" style="background:#0f172a;color:#f8fafc;" />
+            </label>
+          </div>
+        </details>
       </div>
     </div>
   </section>

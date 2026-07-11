@@ -36,26 +36,33 @@ Management stays on the plugin's existing screen and backend routes rather than 
 
 For sharing beyond your LAN without touching your router, enable **Share over iroh** in the settings. The server then dials outbound to [iroh](https://www.iroh.computer/)'s relay/discovery network and becomes reachable from anywhere by a **Library ID** — a self-authenticating public key shown on the screen. Copy it to a friend; they add it in **Remote Client → + → Remote Server over iroh**, and everything works exactly as the direct connection (it's the *same* API, tunnelled over an iroh QUIC stream).
 
-- **No port forwarding, no dynamic DNS, no exposing your machine to the internet.** iroh connects peers directly (hole-punched) when it can, or via a shared public relay otherwise.
+- **No port forwarding, no dynamic DNS, no router setup.** iroh connects peers directly (hole-punched) when it can, or via a shared public relay otherwise.
+- **This reaches the public internet, regardless of your bind Host.** iroh is public by design: with it on, the `127.0.0.1` default (or any bind address) no longer limits who can reach the library — anyone with the Library ID can. **Set an auth token** (below) unless you're happy for anyone with the ID to browse; the token is the only access control on the iroh path, and it protects that path identically to direct HTTP.
 - **The Library ID is stable** (backed by a persistent key stored separately from your settings) and **self-authenticating** — nobody can impersonate your library.
-- **Set an auth token** (below) unless you're happy for anyone with the ID to browse — it protects the iroh path too.
+- **Treat the Library ID like a secret URL.** It's a capability: whoever holds it can reach your library (subject to the auth token). Share it only over channels you trust. If it leaks, use **Regenerate ID** on the screen to issue a new one — the old ID stops working, but every current follower has to re-add the new ID. Rotating the auth token likewise cuts off everyone at once.
 - **Availability follows your machine:** the library is reachable only while this server is running.
 - Requires the `iroh` dependency (in `requirements.txt`, installed by FeedBack on load); it's used only when the toggle is on.
 
 ## Install
 
-Remote Library Server is a FeedBack plugin. Install it the way you install any other
-FeedBack plugin:
+Remote Library Server is a FeedBack plugin. There are two ways to install it, and the
+choice decides how you get updates:
 
-1. Download the latest `feedback-remote-library-server-<version>.zip` from the
-   [Releases](https://github.com/Taynavv/feedback-remote-library-server/releases) page,
-   or clone this repository.
-2. Install it through FeedBack's plugin manager, or place the unpacked
-   `feedback-remote-library-server` folder in your FeedBack plugins directory.
-3. Reload FeedBack. The plugin appears as **Remote Server** in the navigation.
+- **From a release (simplest).** Download the latest
+  `feedback-remote-library-server-<version>.zip` from the
+  [Releases](https://github.com/Taynavv/feedback-remote-library-server/releases) page and
+  extract the `feedback-remote-library-server` folder into your FeedBack user-plugins
+  directory. Updating later means downloading the newer zip and replacing the folder
+  yourself — a zip install is **not** picked up by FeedBack's in-app "Check for Updates".
+- **From a git clone (updatable in-app).** Clone this repository into your FeedBack
+  user-plugins directory (or clone it elsewhere and symlink/junction it in). Because the
+  plugin folder is then a git checkout, FeedBack's plugin manager can update it in place:
+  **Check for Updates → Update** runs a `git pull` and applies on the next restart. Track
+  the default branch and keep the checkout clean, or the fast-forward-only pull is skipped.
 
-See the [FeedBack](https://github.com/got-feedback/feedBack) documentation for where
-your instance loads plugins from.
+Either way, reload FeedBack afterwards — the plugin appears as **Remote Server** in the
+navigation. See the [FeedBack](https://github.com/got-feedback/feedBack) documentation for
+where your instance loads plugins from.
 
 ## Security
 
@@ -122,6 +129,7 @@ The plugin also exposes management endpoints on FeedBack's main backend:
 - `GET /api/plugins/remote_library_server/status`
 - `POST /api/plugins/remote_library_server/start`
 - `POST /api/plugins/remote_library_server/stop`
+- `POST /api/plugins/remote_library_server/iroh/regenerate-key`
 - `GET /api/plugins/remote_library_server/activity`
 - `GET /api/plugins/remote_library_server/local-songs`
 
@@ -134,6 +142,8 @@ The plugin also exposes management endpoints on FeedBack's main backend:
 - `authToken`: optional shared secret. When set, clients must present it to reach any endpoint except `/health` (see [Security](#security)). Default: empty (open access).
 - `shareNamToneAssets`: allows the direct server to expose NAM Tone Engine preset mappings and referenced model/IR assets for synced songs. Default: `false`.
 - `irohEnabled`: also share the server **peer-to-peer over iroh** by a Library ID, with no port forwarding (see [Share over iroh](#share-over-iroh-peer-to-peer-no-port-forwarding)). Default: `false`. (The iroh identity key is stored separately, never in settings.)
+- `irohMaxStreams`: cap on concurrent in-flight iroh streams — an abuse limit for the public P2P path. Default: `128` (clamped to 1–4096). Leave it alone unless you have a specific reason.
+- `irohIdleTimeout`: seconds before an idle iroh stream is torn down (stops a slow peer from holding slots open). Default: `120` (clamped to 10–3600). Leave it alone unless you have a specific reason.
 
 If `enabled` is true during FeedBack startup, the plugin reports `waitingForScan` and starts the direct server after the local library scan reaches `complete`.
 

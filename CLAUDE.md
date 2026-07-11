@@ -12,7 +12,7 @@ Library ID over iroh** with no port forwarding. It is a thin wrapper around Feed
 
 | File | Role |
 |---|---|
-| [routes.py](routes.py) | `setup(app, context)`: management endpoints on FeedBack's main backend (settings / status / start / stop / activity / local-songs) **plus a second, standalone FastAPI app** (`_create_direct_app`) bound to its own host/port that serves the direct library API (`/source`, `/songs`, `/artists`, `/stats`, `/tuning-names`, `/songs/{id}/art`, `/songs/{id}/package`, NAM-tone endpoints) |
+| [routes.py](routes.py) | `setup(app, context)`: management endpoints on FeedBack's main backend (settings / status / start / stop / activity / local-songs / iroh/regenerate-key) **plus a second, standalone FastAPI app** (`_create_direct_app`) bound to its own host/port that serves the direct library API (`/source`, `/songs`, `/artists`, `/stats`, `/tuning-names`, `/songs/{id}/art`, `/songs/{id}/package`, NAM-tone endpoints) |
 | [remote_library_server/models.py](remote_library_server/models.py) | `PackageForm` enum + the remote song-summary shapes returned by the direct API |
 | [remote_library_server/store.py](remote_library_server/store.py) | Settings + runtime state persistence (`settings.json` / `state.json` in the plugin's server-files dir) |
 | [remote_library_server/crypto.py](remote_library_server/crypto.py) | URL-safe encode/decode of remote song IDs (references to library-relative filenames) |
@@ -83,6 +83,25 @@ Library ID over iroh** with no port forwarding. It is a thin wrapper around Feed
   loses it, so a trivial stub hides the bug). HTTP framing (Content-Length / a bodyless method) plus
   `Connection: close` already delimit both request and response, so the FIN is unnecessary.
   `tests/test_iroh_tunnel.py::test_tunnel_pipes_to_real_asgi_server` guards this against a real uvicorn.
+- **The iroh tunnel's abuse limits are a per-read *idle* timeout, never a total-duration cap.** `_pipe`
+  wraps each `recv.read`/`reader.read` in `asyncio.wait_for(..., idle_timeout)` so a stalled stream is
+  torn down, but a legitimate large, steadily-flowing package download must not be. A total timeout
+  would sever big downloads mid-flight. `idle_timeout <= 0` disables it (`timeout = self._idle_timeout
+  or None`). The concurrent-stream cap is a semaphore acquired in `_handle` *before* spawning `_pipe`
+  (backpressure, not unbounded queued tasks); release is bound to the acquired instance so a
+  stop+restart that swaps the semaphore can't cross-release. Both are clamped UI settings
+  (`irohMaxStreams` 1–4096, `irohIdleTimeout` 10–3600) — the knobs tune the protection, never disable it.
+- **Info-leak contracts on the unauthenticated / remote-reachable surface.** `GET /health` returns only
+  `{"ok": true}` — it is reachable without a token and over iroh, so it must never carry the
+  hostname-derived `sourceId` (or anything identifying). `/source` advertises `_public_direct_url()`,
+  which returns `null` on a wildcard bind instead of probing the LAN IP (that probe, `_display_host`/
+  `_discover_lan_host`, stays on the *management* `/status` for the operator only). `/status` redacts
+  `authToken` from its settings blob (`server.authRequired` conveys "is a token set" without the secret);
+  only the dedicated `GET /settings` still returns the token, because the edit form needs it.
+- **Regenerating the iroh identity is the leaked-ID revocation lever.** `regenerate_identity` writes a
+  fresh secret key (⇒ new Library ID), exposed via `POST .../iroh/regenerate-key`, which stops the
+  tunnel, rewrites the key, then `_reconcile_iroh_tunnel`s. It is destructive to reachability by design
+  (old ID stops resolving; every follower must re-add the new one), so the UI button confirms first.
 
 ## Rules
 

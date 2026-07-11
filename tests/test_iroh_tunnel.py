@@ -59,6 +59,31 @@ def test_load_or_create_secret_persists(tmp_path):
     assert first == second  # a stable identity across restarts
 
 
+def test_regenerate_identity_changes_key(tmp_path):
+    pytest.importorskip("iroh")
+    from remote_library_server.iroh_tunnel import _load_or_create_secret, regenerate_identity
+
+    first = _load_or_create_secret(tmp_path)
+    regenerated = regenerate_identity(tmp_path)
+
+    assert len(regenerated) == 32
+    assert regenerated != first  # a brand-new identity, not the persisted one
+    assert _load_or_create_secret(tmp_path) == regenerated  # and it is now the persisted key
+
+
+def test_start_records_abuse_limits(tmp_path):
+    pytest.importorskip("iroh")
+    from remote_library_server.iroh_tunnel import IrohTunnel
+
+    tunnel = IrohTunnel(tmp_path)
+    tunnel.start("127.0.0.1", 65000, max_streams=7, idle_timeout=33)
+    try:
+        assert tunnel._max_streams == 7
+        assert tunnel._idle_timeout == 33.0
+    finally:
+        tunnel.stop()
+
+
 def test_tunnel_lifecycle_and_stable_identity(tmp_path):
     pytest.importorskip("iroh")
     from remote_library_server.iroh_tunnel import IrohTunnel
@@ -133,6 +158,68 @@ def test_tunnel_pipes_http_to_local_server(tmp_path):
         assert b'{"pong": true}' in response
     finally:
         tunnel.stop()
+
+
+def test_tunnel_idle_timeout_tears_down_stalled_stream(tmp_path):
+    """A slow/hung peer must not hold a stream (and its concurrency slot) open forever: the idle
+    timeout tears down a stream that stops making progress. Without it, this fetch would hang until
+    the outer future timeout."""
+    iroh = pytest.importorskip("iroh")
+    from remote_library_server.iroh_tunnel import ALPN, IrohTunnel
+
+    # A local target that accepts the connection but never replies — a hung upstream.
+    stalled = socket.socket()
+    stalled.bind(("127.0.0.1", 0))
+    stalled.listen(8)
+    stall_port = stalled.getsockname()[1]
+    held = []
+
+    def _accept_and_hang():
+        while True:
+            try:
+                conn, _ = stalled.accept()
+            except OSError:
+                break
+            held.append(conn)  # keep it open, never read or write
+
+    threading.Thread(target=_accept_and_hang, daemon=True).start()
+
+    tunnel = IrohTunnel(tmp_path)
+    status = tunnel.start("127.0.0.1", stall_port, max_streams=8, idle_timeout=1)
+
+    loop = asyncio.new_event_loop()
+    threading.Thread(target=loop.run_forever, daemon=True).start()
+
+    def run(coro, timeout=60):
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout)
+
+    async def fetch():
+        secret = iroh.SecretKey.generate()
+        opts = iroh.EndpointOptions(preset=iroh.preset_n0(), secret_key=secret.to_bytes(), alpns=[ALPN])
+        endpoint = await iroh.Endpoint.bind(opts)
+        addr = iroh.EndpointTicket.from_string(status["ticket"]).endpoint_addr()
+        conn = await endpoint.connect(addr, ALPN)
+        bi = await conn.open_bi()
+        send, recv = bi.send(), bi.recv()
+        await send.write_all(b"GET /ping HTTP/1.1\r\nHost: iroh\r\nConnection: close\r\n\r\n")
+        await send.finish()
+        chunks = []
+        while (chunk := await recv.read(65536)):
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    try:
+        # 1s idle timeout must close the stalled stream well within this generous ceiling.
+        response = run(fetch(), timeout=20)
+        assert response == b""  # upstream never replied; the stream closed cleanly instead of hanging
+    finally:
+        tunnel.stop()
+        stalled.close()
+        for conn in held:
+            try:
+                conn.close()
+            except OSError:
+                pass
 
 
 def test_tunnel_pipes_to_real_asgi_server(tmp_path):

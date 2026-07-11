@@ -21,7 +21,11 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from remote_library_server.crypto import sha256_hex
 from remote_library_server.models import PackageForm, RemoteSongStatus, RemoteSongSummary, SyncSupport
-from remote_library_server.store import RemoteLibraryServerStore
+from remote_library_server.store import (
+    IROH_IDLE_TIMEOUT_DEFAULT,
+    IROH_MAX_STREAMS_DEFAULT,
+    RemoteLibraryServerStore,
+)
 
 _store: RemoteLibraryServerStore | None = None
 _get_dlc_dir = None
@@ -37,6 +41,11 @@ _shutdown_requested = threading.Event()
 # re-acquire it) and make the restart atomic against a concurrent start/settings-save.
 _server_lock = threading.RLock()
 NAM_TONE_SYNC_SCHEMA = "slopsmith.nam-tone-sync.v1"
+
+# Bounds for the iroh tunnel abuse limits. The knobs are tunable but clamped so a UI setting can
+# only adjust the protection, never disable it (max_streams>=1, idle_timeout>=10s).
+IROH_MAX_STREAMS_MIN, IROH_MAX_STREAMS_MAX = 1, 4096
+IROH_IDLE_TIMEOUT_MIN, IROH_IDLE_TIMEOUT_MAX = 10, 3600
 
 
 def _plugin_version() -> str:
@@ -153,6 +162,22 @@ def _direct_url() -> str:
     return f"http://{host}:{_bind_port()}"
 
 
+def _public_direct_url() -> str | None:
+    """The server URL advertised to *remote* callers via /source.
+
+    Unlike _direct_url (used by the local management screen), this never runs LAN-IP discovery:
+    on a wildcard bind it returns None instead of probing for the machine's primary address, so a
+    remote/iroh peer can't harvest the internal LAN IP. For an explicit bind it echoes the address
+    the operator chose — which a reachable client already knows.
+    """
+    host = _bind_host()
+    if host in {"0.0.0.0", "::", ""}:
+        return None
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"http://{host}:{_bind_port()}"
+
+
 def _local_provider_has_art() -> bool:
     return callable(_local_provider_method("get_art"))
 
@@ -177,7 +202,26 @@ def _normalize_settings(data: dict) -> dict:
     )
     normalized["authToken"] = str(incoming.get("authToken", current.get("authToken")) or "").strip()
     normalized["irohEnabled"] = bool(incoming.get("irohEnabled", current.get("irohEnabled", False)))
+    normalized["irohMaxStreams"] = _clamp_int(
+        incoming.get("irohMaxStreams", current.get("irohMaxStreams")),
+        IROH_MAX_STREAMS_MIN,
+        IROH_MAX_STREAMS_MAX,
+        IROH_MAX_STREAMS_DEFAULT,
+    )
+    normalized["irohIdleTimeout"] = _clamp_int(
+        incoming.get("irohIdleTimeout", current.get("irohIdleTimeout")),
+        IROH_IDLE_TIMEOUT_MIN,
+        IROH_IDLE_TIMEOUT_MAX,
+        IROH_IDLE_TIMEOUT_DEFAULT,
+    )
     return normalized
+
+
+def _clamp_int(value, low: int, high: int, default: int) -> int:
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 def _scan_status() -> dict:
@@ -428,12 +472,30 @@ def _nam_irs_dir() -> Path:
     return _config_root() / "nam_irs"
 
 
+# Cache NAM asset digests so /nam-tone-sync and every asset download don't re-read+re-hash the
+# same (potentially large) model/IR files on each request. Keyed by resolved path; the (mtime,
+# size) fingerprint invalidates the entry whenever the file changes on disk.
+_sha256_cache: dict[str, tuple[float, int, str]] = {}
+
+
 def _sha256_file(path: Path) -> str:
+    try:
+        stat = path.stat()
+        key = str(path.resolve())
+        cached = _sha256_cache.get(key)
+        if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
+            return cached[2]
+    except OSError:
+        stat = None
+        key = None
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return f"sha256:{digest.hexdigest()}"
+    result = f"sha256:{digest.hexdigest()}"
+    if key is not None and stat is not None:
+        _sha256_cache[key] = (stat.st_mtime, stat.st_size, result)
+    return result
 
 
 def _safe_child(root: Path, name: str | None) -> Path | None:
@@ -644,7 +706,7 @@ def _source_payload() -> dict:
         "namToneSync": {"enabled": _nam_tone_sharing_enabled()},
         "auth": {"required": bool(_auth_token())},
         "server": {
-            "url": _direct_url(),
+            "url": _public_direct_url(),
             "protocol": "slopsmith-direct-library.v1",
         },
     }
@@ -716,7 +778,9 @@ def _create_direct_app() -> FastAPI:
 
     @direct_app.get("/health")
     def health() -> dict:
-        return {"ok": True, "sourceId": _source_id()}
+        # Unauthenticated liveness probe: return only liveness, never identifying detail (the
+        # hostname-derived sourceId used to leak here, reachable without a token and over iroh).
+        return {"ok": True}
 
     @direct_app.get("/source", dependencies=protected)
     def source() -> dict:
@@ -1001,6 +1065,18 @@ def _iroh_enabled() -> bool:
     return bool(_settings().get("irohEnabled"))
 
 
+def _iroh_max_streams() -> int:
+    return _clamp_int(
+        _settings().get("irohMaxStreams"), IROH_MAX_STREAMS_MIN, IROH_MAX_STREAMS_MAX, IROH_MAX_STREAMS_DEFAULT
+    )
+
+
+def _iroh_idle_timeout() -> int:
+    return _clamp_int(
+        _settings().get("irohIdleTimeout"), IROH_IDLE_TIMEOUT_MIN, IROH_IDLE_TIMEOUT_MAX, IROH_IDLE_TIMEOUT_DEFAULT
+    )
+
+
 def _iroh_local_target() -> tuple[str, int]:
     # The tunnel always reaches the direct server locally; if it binds to a wildcard, use loopback.
     host = _bind_host()
@@ -1025,7 +1101,9 @@ def _start_iroh_tunnel() -> None:
             return
         host, port = _iroh_local_target()
         try:
-            status = _iroh_tunnel.start(host, port)
+            status = _iroh_tunnel.start(
+                host, port, max_streams=_iroh_max_streams(), idle_timeout=_iroh_idle_timeout()
+            )
         except Exception as exc:
             if _store:
                 _store.add_activity("iroh", "failed", f"iroh tunnel failed to start: {exc}")
@@ -1105,6 +1183,10 @@ def setup(app, context):
     @app.get("/api/plugins/remote_library_server/status")
     def status():
         root = _local_library_root()
+        # Redact the auth token from the broadly-consumed status blob (it's echoed only by the
+        # dedicated /settings endpoint that backs the edit form). "Is a token set?" is still
+        # available without the secret via server.authRequired.
+        settings = {key: value for key, value in _settings().items() if key != "authToken"}
         return {
             "source": {
                 "sourceId": _source_id(),
@@ -1113,12 +1195,14 @@ def setup(app, context):
                 "libraryRootConfigured": bool(root),
             },
             "server": _server_status(),
-            "settings": _settings(),
+            "settings": settings,
             "scan": _scan_status(),
             "defaults": {
                 "host": "127.0.0.1",
                 "port": 8765,
                 "sourceName": _default_source_name(),
+                "irohMaxStreams": IROH_MAX_STREAMS_DEFAULT,
+                "irohIdleTimeout": IROH_IDLE_TIMEOUT_DEFAULT,
             },
         }
 
@@ -1133,6 +1217,30 @@ def setup(app, context):
     @app.post("/api/plugins/remote_library_server/stop")
     def stop_server():
         return {"server": _stop_direct_server(), "settings": _settings()}
+
+    @app.post("/api/plugins/remote_library_server/iroh/regenerate-key")
+    def regenerate_iroh_key():
+        # Replace the persistent iroh secret key -> a brand-new Library ID. This is the operator's
+        # lever for revoking a leaked ID; it permanently changes the ID, so every current follower
+        # must re-add the new one. Restart the tunnel (if running) so the new identity takes effect.
+        try:
+            from remote_library_server.iroh_tunnel import regenerate_identity
+        except Exception as exc:  # pragma: no cover - defensive; module import shouldn't fail
+            raise HTTPException(status_code=503, detail=f"iroh is unavailable: {exc}") from exc
+        with _server_lock:
+            _stop_iroh_tunnel()
+            try:
+                regenerate_identity(_store.root if _store else _config_root())
+            except ImportError as exc:
+                raise HTTPException(status_code=503, detail="iroh is not installed") from exc
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"failed to regenerate iroh key: {exc}") from exc
+            _reconcile_iroh_tunnel()
+        if _store:
+            _store.add_activity(
+                "iroh", "regenerated", "iroh Library ID regenerated — existing followers must re-add the new ID"
+            )
+        return {"server": _server_status()}
 
     @app.get("/api/plugins/remote_library_server/local-songs")
     def local_songs(

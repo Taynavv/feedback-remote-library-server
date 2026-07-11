@@ -8,7 +8,22 @@ from threading import RLock
 
 from .models import utc_now_iso
 
-_SETTINGS_KEYS = ("enabled", "host", "port", "sourceName", "shareNamToneAssets", "authToken", "irohEnabled")
+_SETTINGS_KEYS = (
+    "enabled",
+    "host",
+    "port",
+    "sourceName",
+    "shareNamToneAssets",
+    "authToken",
+    "irohEnabled",
+    "irohMaxStreams",
+    "irohIdleTimeout",
+)
+
+# Tuned defaults for the iroh tunnel's abuse limits. Exposed as (bounded) UI settings, but the
+# defaults suit the intended "share with a handful of followers" use — see _normalize_settings.
+IROH_MAX_STREAMS_DEFAULT = 128
+IROH_IDLE_TIMEOUT_DEFAULT = 120
 
 
 def _default_settings() -> dict:
@@ -20,6 +35,8 @@ def _default_settings() -> dict:
         "shareNamToneAssets": False,
         "authToken": "",
         "irohEnabled": False,
+        "irohMaxStreams": IROH_MAX_STREAMS_DEFAULT,
+        "irohIdleTimeout": IROH_IDLE_TIMEOUT_DEFAULT,
     }
 
 

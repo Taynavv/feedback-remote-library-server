@@ -29,6 +29,13 @@ def _iroh():
     return iroh
 
 
+def _write_secret(path: Path, secret: bytes) -> None:
+    """Atomically persist a 32-byte secret key (base64) to its own file."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(base64.b64encode(secret).decode("ascii"), encoding="utf-8")
+    tmp.replace(path)
+
+
 def _load_or_create_secret(config_dir: Path) -> bytes:
     """The server's persistent iroh secret key (32 bytes), created once and reused so the Library
     ID stays stable. Kept in its own file — it is a secret and must never reach the settings API."""
@@ -41,9 +48,19 @@ def _load_or_create_secret(config_dir: Path) -> bytes:
         except Exception:
             pass
     secret = _iroh().SecretKey.generate().to_bytes()
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(base64.b64encode(secret).decode("ascii"), encoding="utf-8")
-    tmp.replace(path)
+    _write_secret(path, secret)
+    return secret
+
+
+def regenerate_identity(config_dir: Path) -> bytes:
+    """Force a brand-new persistent secret key (=> a new Library ID), replacing any existing one.
+
+    This is destructive to reachability: the Library ID changes, so every current follower must
+    re-add the new ID. Callers should stop the tunnel first and restart it to pick up the new key.
+    """
+    path = Path(config_dir) / _IDENTITY_FILE
+    secret = _iroh().SecretKey.generate().to_bytes()
+    _write_secret(path, secret)
     return secret
 
 
@@ -61,14 +78,21 @@ class IrohTunnel:
         self._ticket: str | None = None
         self._local: tuple[str, int] | None = None
         self._stopping = threading.Event()
+        self._max_streams = 128
+        self._idle_timeout = 120.0
+        self._stream_sem: asyncio.Semaphore | None = None
 
     # -- lifecycle -------------------------------------------------------
 
-    def start(self, local_host: str, local_port: int) -> dict:
+    def start(self, local_host: str, local_port: int, max_streams: int = 128, idle_timeout: float = 120.0) -> dict:
         with self._lock:
             if self._endpoint is not None:
                 return self.status()
             self._local = (local_host, int(local_port))
+            # Abuse limits for the public P2P path: cap concurrent in-flight streams and tear down
+            # a stream that goes idle (a slow-loris peer with the Library ID can't hold slots open).
+            self._max_streams = max(1, int(max_streams))
+            self._idle_timeout = float(idle_timeout) if idle_timeout and idle_timeout > 0 else 0.0
             self._stopping.clear()
             self._loop = asyncio.new_event_loop()
             threading.Thread(target=self._loop.run_forever, name="iroh-server-loop", daemon=True).start()
@@ -132,6 +156,9 @@ class IrohTunnel:
         return await iroh.Endpoint.bind(options)
 
     async def _accept_loop(self):
+        # Bound the total number of concurrent in-flight streams across all connections. Created on
+        # the tunnel's own loop before any _handle task is spawned.
+        self._stream_sem = asyncio.Semaphore(self._max_streams)
         while not self._stopping.is_set():
             try:
                 incoming = await self._endpoint.accept_next()
@@ -153,7 +180,16 @@ class IrohTunnel:
                 bi = await conn.accept_bi()
             except Exception:
                 break
-            asyncio.ensure_future(self._pipe(bi))
+            # Acquire a slot before spawning the pipe so a flood of streams applies backpressure
+            # here (we stop pulling new streams) instead of piling up unbounded tasks. Bind the
+            # semaphore instance into the release callback so acquire/release always pair up even
+            # if a later stop+restart swaps in a fresh semaphore.
+            sem = self._stream_sem
+            if sem is not None:
+                await sem.acquire()
+            task = asyncio.ensure_future(self._pipe(bi))
+            if sem is not None:
+                task.add_done_callback(lambda _t, s=sem: s.release())
 
     async def _pipe(self, bi):
         recv, send = bi.recv(), bi.send()
@@ -167,15 +203,19 @@ class IrohTunnel:
                 pass
             return
 
+        timeout = self._idle_timeout or None
+
         async def iroh_to_local():
             # Relay the request bytes to the local server. Do NOT half-close (write_eof) the local
             # socket when the iroh side ends: real ASGI servers (uvicorn/h11) treat an early FIN on
             # the request as a client disconnect and drop the response without replying. HTTP framing
             # — Content-Length, or a bodyless method like GET — already tells the local server where
             # the request ends, and Connection: close bounds the response, so no EOF signal is needed.
+            # A per-read idle timeout (not a total-duration cap) tears down a stalled stream without
+            # cutting off a legitimate large, steadily-flowing transfer.
             try:
                 while True:
-                    chunk = await recv.read(65536)
+                    chunk = await asyncio.wait_for(recv.read(65536), timeout)
                     if not chunk:
                         break
                     writer.write(chunk)
@@ -186,10 +226,12 @@ class IrohTunnel:
         async def local_to_iroh():
             try:
                 while True:
-                    chunk = await reader.read(65536)
+                    chunk = await asyncio.wait_for(reader.read(65536), timeout)
                     if not chunk:
                         break
                     await send.write_all(chunk)
+            except Exception:
+                pass
             finally:
                 try:
                     await send.finish()

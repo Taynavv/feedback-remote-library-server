@@ -55,7 +55,7 @@
     }
 
     function defaultValue(key) {
-        const fallback = { host: '127.0.0.1', port: 8765, sourceName: '' };
+        const fallback = { host: '127.0.0.1', port: 8765, sourceName: '', irohMaxStreams: 128, irohIdleTimeout: 120 };
         return state.defaults[key] || fallback[key] || '';
     }
 
@@ -68,11 +68,15 @@
             'rls-host': settings.host || '',
             'rls-port': settings.port || '',
             'rls-auth-token': settings.authToken || '',
+            'rls-iroh-max-streams': settings.irohMaxStreams || '',
+            'rls-iroh-idle-timeout': settings.irohIdleTimeout || '',
         };
         const placeholders = {
             'rls-source-name': defaultValue('sourceName'),
             'rls-host': defaultValue('host'),
             'rls-port': defaultValue('port'),
+            'rls-iroh-max-streams': defaultValue('irohMaxStreams'),
+            'rls-iroh-idle-timeout': defaultValue('irohIdleTimeout'),
         };
         for (const [id, value] of Object.entries(values)) {
             const input = document.getElementById(id);
@@ -92,6 +96,8 @@
             host: document.getElementById('rls-host')?.value.trim() || defaultValue('host'),
             port: Number(document.getElementById('rls-port')?.value || defaultValue('port')),
             authToken: document.getElementById('rls-auth-token')?.value.trim() || '',
+            irohMaxStreams: Number(document.getElementById('rls-iroh-max-streams')?.value || defaultValue('irohMaxStreams')),
+            irohIdleTimeout: Number(document.getElementById('rls-iroh-idle-timeout')?.value || defaultValue('irohIdleTimeout')),
         };
     }
 
@@ -150,7 +156,11 @@
                         <input readonly value="${esc(iroh.libraryId)}" onclick="this.select()" class="min-w-0 flex-1 rounded-lg border border-gray-800 bg-dark-950 px-3 py-2 font-mono text-xs text-gray-100" style="background:#0f172a;color:#f8fafc;" />
                         <button class="flex-shrink-0 rounded-lg bg-teal-500/20 px-3 py-2 text-sm text-teal-100 transition hover:bg-teal-500/30" data-rls-copy="${esc(iroh.libraryId)}">Copy</button>
                     </div>
-                    <div class="mt-1 text-xs text-gray-400">Followers add it in Remote Client → + → “Remote Server over iroh”.</div>
+                    <div class="mt-2 flex items-center justify-between gap-2">
+                        <div class="text-xs text-gray-400">Followers add it in Remote Client → + → “Remote Server over iroh”.</div>
+                        <button class="flex-shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs text-gray-300 transition hover:border-red-500/40 hover:text-red-200" data-rls-regenerate-iroh title="Revoke the current Library ID and issue a new one">Regenerate ID</button>
+                    </div>
+                    <div class="mt-1 text-xs text-gray-500">If the ID leaks, regenerating issues a new one — but every current follower must re-add it.</div>
                 ` : `<div class="mt-1 text-sm text-gray-300">Starts with the server — the Library ID will appear here once it's online.</div>`}
             </div>
         ` : '';
@@ -227,11 +237,25 @@
         }
     }
 
+    async function regenerateIroh() {
+        if (!window.confirm('Regenerate the Library ID?\n\nThis permanently replaces it with a new ID. Every current follower will have to re-add the new ID before they can connect again.')) {
+            return;
+        }
+        setBusyState({ busyAction: 'regenerate' });
+        try {
+            await api('/iroh/regenerate-key', { method: 'POST', body: JSON.stringify({}) });
+            setMessage('Library ID regenerated. Share the new ID with your followers.', 'success');
+            await refresh();
+        } finally {
+            setBusyState({ busyAction: '' });
+        }
+    }
+
     function installHandlers() {
         if (state.installed) return;
         state.installed = true;
         document.addEventListener('click', async event => {
-            const target = event.target.closest('[data-rls-refresh],[data-rls-save],[data-rls-start],[data-rls-stop],[data-rls-open-screen],[data-rls-copy]');
+            const target = event.target.closest('[data-rls-refresh],[data-rls-save],[data-rls-start],[data-rls-stop],[data-rls-copy],[data-rls-regenerate-iroh]');
             if (!target || target.disabled) return;
             try {
                 if (target.matches('[data-rls-copy]')) {
@@ -247,7 +271,7 @@
                 if (target.matches('[data-rls-save]')) await save();
                 if (target.matches('[data-rls-start]')) await start();
                 if (target.matches('[data-rls-stop]')) await stop();
-                if (target.matches('[data-rls-open-screen]')) window.location.hash = '#remote-library-server';
+                if (target.matches('[data-rls-regenerate-iroh]')) await regenerateIroh();
             } catch (error) {
                 setMessage(error.message || 'Action failed.', 'error');
             }
